@@ -17,7 +17,7 @@ def get_platform():
         return 'osx'
     elif sys.platform.startswith('linux'):
         return 'linux'
-    raise Exception('Unsupported platform ' + sys.platform)
+    raise Exception(f'Unsupported platform {sys.platform}')
 
 
 SCRIPT_PATH = os.path.dirname(os.path.abspath(__file__))
@@ -50,7 +50,7 @@ def cd(new_dir):
 def mkdir_p(path):
     """ mkdir -p """
     if not os.path.isdir(path):
-        click.secho('Making ' + path, fg='yellow')
+        click.secho(f'Making {path}', fg='yellow')
         os.makedirs(path)
 
 
@@ -104,7 +104,7 @@ def unity(ctx):
         BUILDS.append({BUILD_BASE_PATH: UNITY_DLL_PATH})
 
     else:
-        raise Exception('Unsupported platform ' + sys.platform)
+        raise Exception(f'Unsupported platform {sys.platform}')
 
     for build in BUILDS:
         for i in build:
@@ -150,7 +150,7 @@ def unreal(ctx):
         BUILDS.append({BUILD_BASE_PATH: UNREAL_DLL_PATH})
 
     else:
-        raise Exception('Unsupported platform ' + sys.platform)
+        raise Exception(f'Unsupported platform {sys.platform}')
 
     for build in BUILDS:
         for i in build:
@@ -165,15 +165,19 @@ def build_lib(build_name, generator, options, just_release):
     mkdir_p(build_path)
     mkdir_p(install_path)
     with cd(build_path):
-        initial_cmake = ['cmake', SCRIPT_PATH, '-DCMAKE_INSTALL_PREFIX=%s' % os.path.join('..', 'install', build_name)]
+        initial_cmake = [
+            'cmake',
+            SCRIPT_PATH,
+            f"-DCMAKE_INSTALL_PREFIX={os.path.join('..', 'install', build_name)}",
+        ]
         if generator:
             initial_cmake.extend(['-G', generator])
         for key in options:
             val = options[key]
             if type(val) is bool:
                 val = 'ON' if val else 'OFF'
-            initial_cmake.append('-D%s=%s' % (key, val))
-        click.echo('--- Building ' + build_name)
+            initial_cmake.append(f'-D{key}={val}')
+        click.echo(f'--- Building {build_name}')
         subprocess.check_call(initial_cmake)
         if not just_release:
             subprocess.check_call(['cmake', '--build', '.', '--config', 'Debug'])
@@ -184,7 +188,9 @@ def build_lib(build_name, generator, options, just_release):
 def archive():
     """ create zip of install dir """
     click.echo('--- Archiving')
-    archive_file_path = os.path.join(SCRIPT_PATH, 'builds', 'discord-rpc-%s.zip' % get_platform())
+    archive_file_path = os.path.join(
+        SCRIPT_PATH, 'builds', f'discord-rpc-{get_platform()}.zip'
+    )
     archive_file = zipfile.ZipFile(archive_file_path, 'w', zipfile.ZIP_DEFLATED)
     archive_src_base_path = INSTALL_ROOT
     archive_dst_base_path = 'discord-rpc'
@@ -193,7 +199,7 @@ def archive():
             for fname in filenames:
                 fpath = os.path.join(path, fname)
                 dst_path = os.path.normpath(os.path.join(archive_dst_base_path, fpath))
-                click.echo('Adding ' + dst_path)
+                click.echo(f'Adding {dst_path}')
                 archive_file.write(fpath, dst_path)
 
 
@@ -202,7 +208,19 @@ def sign():
     """ Do code signing within install directory using our cert """
     tool = get_signtool()
     signable_extensions = set()
-    if PLATFORM == 'win':
+    if PLATFORM == 'osx':
+        signable_extensions.add('.dylib')
+        sign_command_base = [
+            tool,
+            '--keychain',
+            os.path.expanduser('~/Library/Keychains/login.keychain'),
+            '-vvvv',
+            '--deep',
+            '--force',
+            '--sign',
+            'Developer ID Application: Hammer & Chisel Inc. (53Q6R32WPB)',
+        ]
+    elif PLATFORM == 'win':
         signable_extensions.add('.dll')
         sign_command_base = [
             tool,
@@ -218,18 +236,6 @@ def sign():
             '/fd',
             'sha256',
         ]
-    elif PLATFORM == 'osx':
-        signable_extensions.add('.dylib')
-        sign_command_base = [
-            tool,
-            '--keychain',
-            os.path.expanduser('~/Library/Keychains/login.keychain'),
-            '-vvvv',
-            '--deep',
-            '--force',
-            '--sign',
-            'Developer ID Application: Hammer & Chisel Inc. (53Q6R32WPB)',
-        ]
     else:
         click.secho('Not signing things on this platform yet', fg='red')
         return
@@ -241,7 +247,7 @@ def sign():
             if ext not in signable_extensions:
                 continue
             fpath = os.path.join(path, fname)
-            click.echo('Sign ' + fpath)
+            click.echo(f'Sign {fpath}')
             sign_command = sign_command_base + [fpath]
             subprocess.check_call(sign_command)
 
@@ -278,7 +284,18 @@ def libs(clean, static, shared, skip_formatter, just_release):
         static_options['WARNINGS_AS_ERRORS'] = True
         dynamic_options['WARNINGS_AS_ERRORS'] = True
 
-    if PLATFORM == 'win':
+    if PLATFORM == 'linux':
+        if static:
+            build_lib('linux-static', None, static_options, just_release)
+        if shared:
+            build_lib('linux-dynamic', None, dynamic_options, just_release)
+
+    elif PLATFORM == 'osx':
+        if static:
+            build_lib('osx-static', None, static_options, just_release)
+        if shared:
+            build_lib('osx-dynamic', None, dynamic_options, just_release)
+    elif PLATFORM == 'win':
         generator32 = 'Visual Studio 14 2015'
         generator64 = 'Visual Studio 14 2015 Win64'
         if static:
@@ -287,16 +304,6 @@ def libs(clean, static, shared, skip_formatter, just_release):
         if shared:
             build_lib('win32-dynamic', generator32, dynamic_options, just_release)
             build_lib('win64-dynamic', generator64, dynamic_options, just_release)
-    elif PLATFORM == 'osx':
-        if static:
-            build_lib('osx-static', None, static_options, just_release)
-        if shared:
-            build_lib('osx-dynamic', None, dynamic_options, just_release)
-    elif PLATFORM == 'linux':
-        if static:
-            build_lib('linux-static', None, static_options, just_release)
-        if shared:
-            build_lib('linux-dynamic', None, dynamic_options, just_release)
 
 
 if __name__ == '__main__':
